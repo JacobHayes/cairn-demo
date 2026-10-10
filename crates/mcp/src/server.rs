@@ -28,6 +28,7 @@ use rmcp::transport::streamable_http_server::session::local::LocalSessionManager
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
 use rmcp::{ErrorData, RoleServer, ServerHandler};
 use serde_json::{Map, Value};
+use tracing::Instrument;
 
 use crate::{ToolError, ToolSet, instructions, tools};
 
@@ -83,7 +84,7 @@ impl<S: Store + 'static> ServerHandler for Server<S> {
     fn list_tools(
         &self,
         _request: Option<PaginatedRequestParams>,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<ListToolsResult, ErrorData>> + Send + '_ {
         let tools = ToolSet::<S>::definitions().into_iter().map(|definition| {
             let destructive = tools::spec(definition.name).is_some_and(|spec| spec.destructive);
@@ -103,6 +104,7 @@ impl<S: Store + 'static> ServerHandler for Server<S> {
             .with_annotations(annotations)
         });
         std::future::ready(Ok(ListToolsResult::with_all_items(tools.collect())))
+            .instrument(request_span(&context, "tools/list", None))
     }
 
     async fn call_tool(
@@ -110,38 +112,53 @@ impl<S: Store + 'static> ServerHandler for Server<S> {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
-        let actor = actor(&context)?;
-        let name = request.name.to_string();
-        let arguments = Value::Object(request.arguments.unwrap_or_default());
-        let answer = observed(self.tools.clone(), actor, name, arguments).await;
-        let result = match answer {
-            Ok(output) => CallToolResult::structured(output),
-            Err(error @ ToolError::UnknownTool { .. }) => {
-                return Err(ErrorData::invalid_params(error.to_string(), None));
-            }
-            Err(error @ ToolError::Failed { .. }) => {
-                return Err(ErrorData::internal_error(error.to_string(), None));
-            }
-            Err(error) => refused(&error),
-        };
-        Ok(result.into())
+        let span = request_span(&context, "tools/call", Some(request.name.as_ref()));
+        async {
+            let actor = actor(&context)?;
+            let name = request.name.to_string();
+            let arguments = Value::Object(request.arguments.unwrap_or_default());
+            let answer = observed(self.tools.clone(), actor, name, arguments).await;
+            tracing::Span::current().record("mcp.tool.result.is_error", answer.is_err());
+            tracing::Span::current().record(
+                "sentry.status",
+                if answer.is_ok() {
+                    "ok"
+                } else {
+                    "internal_error"
+                },
+            );
+            let result = match answer {
+                Ok(output) => CallToolResult::structured(output),
+                Err(error @ ToolError::UnknownTool { .. }) => {
+                    return Err(ErrorData::invalid_params(error.to_string(), None));
+                }
+                Err(error @ ToolError::Failed { .. }) => {
+                    return Err(ErrorData::internal_error(error.to_string(), None));
+                }
+                Err(error) => refused(&error),
+            };
+            Ok(result.into())
+        }
+        .instrument(span.clone())
+        .await
     }
 
     fn list_prompts(
         &self,
         _request: Option<PaginatedRequestParams>,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<ListPromptsResult, ErrorData>> + Send + '_ {
         let prompts = instructions::workflows()
             .into_iter()
             .map(|workflow| Prompt::new(workflow.name, Some(workflow.description), None));
         std::future::ready(Ok(ListPromptsResult::with_all_items(prompts.collect())))
+            .instrument(request_span(&context, "prompts/list", None))
     }
 
     fn get_prompt(
         &self,
         request: GetPromptRequestParams,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<GetPromptResponse, ErrorData>> + Send + '_ {
         let workflow = instructions::workflows()
             .into_iter()
@@ -154,7 +171,7 @@ impl<S: Store + 'static> ServerHandler for Server<S> {
             let message = format!("no prompt is named {}", request.name);
             Err(ErrorData::invalid_params(message, None))
         };
-        std::future::ready(answer)
+        std::future::ready(answer).instrument(request_span(&context, "prompts/get", None))
     }
 }
 
@@ -188,26 +205,47 @@ async fn observed<S: Store + 'static>(
         .get("patch_id")
         .and_then(Value::as_str)
         .map(str::to_owned);
-    let span = tracing::info_span!("tool", tool, patch_id = patch_id.as_deref());
-    let started = Instant::now();
-    let answer = if spec.writes {
-        let task = tokio::spawn(async move { tools.call(&actor, tool, arguments).await });
-        task.await.unwrap_or_else(|error| {
-            Err(ToolError::Failed {
-                message: format!("the tool's task failed: {error}"),
+    let span = tracing::info_span!(
+        "tool",
+        tool,
+        patch_id = patch_id.as_deref(),
+        mcp.tool.result.is_error = tracing::field::Empty,
+        sentry.status = tracing::field::Empty
+    );
+    async {
+        let started = Instant::now();
+        let answer = if spec.writes {
+            let task = tokio::spawn(
+                async move { tools.call(&actor, tool, arguments).await }.in_current_span(),
+            );
+            task.await.unwrap_or_else(|error| {
+                Err(ToolError::Failed {
+                    message: format!("the tool's task failed: {error}"),
+                })
             })
-        })
-    } else {
-        tools.call(&actor, tool, arguments).await
-    };
-    let elapsed = started.elapsed();
-    let outcome = outcome(&answer);
-    span.in_scope(|| {
-        tracing::info!(outcome, duration_ms = elapsed.as_millis(), "answered");
-    });
-    metrics::counter!(TOOL_CALLS, "tool" => tool, "outcome" => outcome).increment(1);
-    metrics::histogram!(TOOL_CALL_DURATION, "tool" => tool).record(elapsed.as_secs_f64());
-    answer
+        } else {
+            tools.call(&actor, tool, arguments).await
+        };
+        let elapsed = started.elapsed();
+        let outcome = outcome(&answer);
+        span.in_scope(|| {
+            tracing::info!(outcome, duration_ms = elapsed.as_millis(), "answered");
+        });
+        metrics::counter!(TOOL_CALLS, "tool" => tool, "outcome" => outcome).increment(1);
+        metrics::histogram!(TOOL_CALL_DURATION, "tool" => tool).record(elapsed.as_secs_f64());
+        let failed = answer.is_err();
+        tracing::Span::current().record("mcp.tool.result.is_error", failed);
+        tracing::Span::current().record(
+            "sentry.status",
+            if failed { "internal_error" } else { "ok" },
+        );
+        if let Err(ToolError::Failed { message }) = &answer {
+            tracing::error!(%message, "MCP tool failed");
+        }
+        answer
+    }
+    .instrument(span.clone())
+    .await
 }
 
 /// A call's outcome, as the count names it.
@@ -251,4 +289,36 @@ fn refused(error: &ToolError) -> CallToolResult {
         .content
         .insert(0, ContentBlock::text(error.to_string()));
     result
+}
+
+fn request_span(
+    context: &RequestContext<RoleServer>,
+    method: &str,
+    tool: Option<&str>,
+) -> tracing::Span {
+    let client = context.peer.peer_info();
+    let user_agent = context
+        .extensions
+        .get::<Parts>()
+        .and_then(|parts| parts.headers.get(axum::http::header::USER_AGENT))
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split_whitespace().next());
+    let (client_name, client_version) = user_agent.map_or_else(
+        || {
+            client.as_ref().map_or(("unknown", "unknown"), |info| {
+                (
+                    info.client_info.name.as_str(),
+                    info.client_info.version.as_str(),
+                )
+            })
+        },
+        |agent| agent.split_once('/').unwrap_or((agent, "unknown")),
+    );
+    let name = tool.map_or_else(|| method.to_owned(), |tool| format!("{method} {tool}"));
+    tracing::info_span!("MCP request", sentry.op = "mcp.server", sentry.name = %name,
+        mcp.method.name = method, mcp.tool.name = tool, gen_ai.tool.name = tool,
+        mcp.transport = "http", network.transport = "tcp", mcp.request.id = %context.id,
+        mcp.client.name = client_name,
+        mcp.client.version = client_version,
+        mcp.tool.result.is_error = tracing::field::Empty, sentry.status = tracing::field::Empty)
 }

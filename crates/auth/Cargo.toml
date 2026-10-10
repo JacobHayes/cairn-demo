@@ -30,6 +30,8 @@ subtle.workspace = true
 tokio = { workspace = true, features = ["net", "rt", "sync", "time"] }
 url.workspace = true
 
+tracing.workspace = true
+
 [dev-dependencies]
 ed25519-dalek.workspace = true
 p256.workspace = true

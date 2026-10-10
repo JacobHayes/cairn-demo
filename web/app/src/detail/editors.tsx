@@ -5,6 +5,7 @@
 import type { Schema } from "@cairn/client";
 import { useId, type ReactNode } from "react";
 
+import { flag } from "../flags.ts";
 import { dateWords } from "../timeline/model.ts";
 import { Button, Field } from "../ui/kit.tsx";
 import { isTerminal, nodeOf, transition, type Mutation, type NodeDetail, type Ready } from "./model.ts";
@@ -49,7 +50,10 @@ function DraftForm({
     }
   };
   return (
-    <span className="row" data-testid={`${form}-form`}>
+    <span className="row" data-testid={`${form}-form`} onBlur={(event) => {
+      if (flag("inspector-autosave") && !event.currentTarget.contains(event.relatedTarget)
+          && !write.disabled && value.trim() !== "" && value !== start) void save();
+    }}>
       {input(value, draft.change)}
       <Button primary disabled={write.disabled || value.trim() === ""} onClick={() => void save()}>
         Save

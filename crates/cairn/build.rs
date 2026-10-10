@@ -17,6 +17,25 @@ const WEB_BUILD: &str = "../../web/app/dist/build";
 
 fn main() -> io::Result<()> {
     println!("cargo::rerun-if-changed={WEB_BUILD}");
+    println!("cargo::rerun-if-env-changed=SENTRY_RELEASE");
+    println!("cargo::rerun-if-changed=../../.git/HEAD");
+    println!("cargo::rerun-if-changed=../../.git/refs");
+    let release = if let Ok(release) = std::env::var("SENTRY_RELEASE") {
+        release
+    } else {
+        let sha = std::process::Command::new("git")
+            .args(["rev-parse", "--short=12", "HEAD"])
+            .output()?;
+        if !sha.status.success() {
+            return Err(io::Error::other("the release revision could not be read"));
+        }
+        format!(
+            "cairn@{}+{}",
+            env!("CARGO_PKG_VERSION"),
+            String::from_utf8_lossy(&sha.stdout).trim()
+        )
+    };
+    println!("cargo::rustc-env=CAIRN_RELEASE={release}");
     let mut hasher = DefaultHasher::new();
     let folder = Path::new(WEB_BUILD);
     let present = folder.is_dir();

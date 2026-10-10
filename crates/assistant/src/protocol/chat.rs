@@ -116,8 +116,87 @@ pub fn reply(answer: &Value) -> Result<Reply, ProviderError> {
         });
     }
     Ok(Reply {
+        model: answer
+            .get("model")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        usage: super::usage(answer, false),
         text,
         calls,
         raw: None,
     })
+}
+
+/// I5: `OpenRouter` usage accounting is an extension, sent only to its endpoint.
+pub(super) fn include_usage(
+    body: &mut Value,
+    protocol: crate::provider::Protocol,
+    endpoint: &url::Url,
+) {
+    if protocol == crate::provider::Protocol::ChatCompletions
+        && endpoint.host_str() == Some("openrouter.ai")
+    {
+        body["usage"] = json!({"include": true});
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::provider::Protocol;
+
+    /// I5: endpoint-specific extensions never reach another provider or protocol.
+    #[test]
+    fn accounting_is_requested_only_for_openrouter_chat() {
+        for (endpoint, protocol, expected) in [
+            (
+                "https://openrouter.ai/api/v1",
+                Protocol::ChatCompletions,
+                true,
+            ),
+            (
+                "https://openrouter.ai.other/api/v1",
+                Protocol::ChatCompletions,
+                false,
+            ),
+            (
+                "https://api.openai.com/v1",
+                Protocol::ChatCompletions,
+                false,
+            ),
+            (
+                "https://openrouter.ai/api/v1",
+                Protocol::OpenaiResponses,
+                false,
+            ),
+        ] {
+            let mut body = json!({"model": "reference-model"});
+            include_usage(&mut body, protocol, &endpoint.parse().unwrap());
+            assert_eq!(
+                body.get("usage"),
+                expected.then(|| json!({"include": true})).as_ref()
+            );
+        }
+    }
+
+    /// I5: real provider accounting includes cost and subsets without changing totals.
+    #[test]
+    fn optional_usage_preserves_cost_cached_and_reasoning_tokens() {
+        let mut answer = json!({"choices": [{"message": {"content": "Ready"}}],
+            "usage": {"prompt_tokens": 31, "completion_tokens": 7, "total_tokens": 38,
+            "cost": 0.00123, "prompt_tokens_details": {"cached_tokens": 5},
+            "completion_tokens_details": {"reasoning_tokens": 3}}});
+        let usage = reply(&answer).unwrap().usage.unwrap();
+        assert_eq!((usage.input, usage.output, usage.total), (31, 7, 38));
+        assert_eq!(usage.cost_usd, Some(0.00123));
+        assert_eq!(usage.cache_read_input, Some(5));
+        assert_eq!(usage.reasoning_output, Some(3));
+        answer["usage"]["cost"] = json!(-1);
+        answer["usage"]["prompt_tokens_details"]["cached_tokens"] = json!("invalid");
+        let usage = reply(&answer).unwrap().usage.unwrap();
+        assert_eq!(usage.cost_usd, None);
+        assert_eq!(usage.cache_read_input, None);
+        answer.as_object_mut().unwrap().remove("usage");
+        assert!(reply(&answer).unwrap().usage.is_none());
+    }
 }

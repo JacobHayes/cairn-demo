@@ -8,6 +8,7 @@ use std::collections::BTreeSet;
 use std::fmt::Write;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tracing::Instrument;
 
 use cairn_auth::Clock;
 use cairn_mcp::{ToolError, ToolSet, instructions};
@@ -204,17 +205,23 @@ impl<S: Store + 'static> Assistant<S> {
             return Err(TurnError::Overloaded);
         };
         let id = conversation::conversation_id(&target, &actor.user);
-        let Some(running) = Running::start(&self.busy, id) else {
+        let Some(running) = Running::start(&self.busy, id.clone()) else {
             return Err(TurnError::ConversationBusy);
         };
         let this = self.clone();
         let user = actor.clone();
-        let task = tokio::spawn(async move {
-            let answer = this.run(&user, &target, &message).await;
-            drop(running);
-            drop(slot);
-            answer
-        });
+        let span = tracing::info_span!("assistant turn", sentry.op = "gen_ai.invoke_agent",
+            sentry.name = "invoke_agent cairn-assistant", gen_ai.operation.name = "invoke_agent",
+            gen_ai.agent.name = "cairn-assistant", gen_ai.conversation.id = %id);
+        let task = tokio::spawn(
+            async move {
+                let answer = this.run(&user, &target, &message).await;
+                drop(running);
+                drop(slot);
+                answer
+            }
+            .instrument(span),
+        );
         match task.await {
             Ok(answer) => answer,
             Err(error) if error.is_panic() => std::panic::resume_unwind(error.into_panic()),
@@ -354,17 +361,7 @@ impl<S: Store + 'static> Assistant<S> {
                     results.push(result(&call.id, Err(refused)));
                     continue;
                 }
-                // On its own task, so a commit the deadline overtakes still completes.
-                let (tools, store, actor) =
-                    (self.tools.clone(), Arc::clone(&self.store), acting.clone());
-                let (name, arguments) = (call.name.clone(), call.arguments.clone());
-                let mut held = std::mem::take(&mut ledger);
-                let running = tokio::spawn(async move {
-                    let called = (name.as_str(), arguments);
-                    let store = store.as_ref();
-                    let outcome = wrapper::run(&tools, store, &actor, called, &mut held).await;
-                    (outcome, held)
-                });
+                let running = self.spawn_tool(acting, call, std::mem::take(&mut ledger));
                 let mut running = running;
                 let (outcome, held) = match tokio::time::timeout_at(deadline, &mut running).await {
                     Ok(Ok(ran)) => ran,
@@ -394,6 +391,53 @@ impl<S: Store + 'static> Assistant<S> {
         }
         patina_dst::sometimes!(true, "assistant-iteration-limit-reached");
         (None, actions, Ended::IterationLimit)
+    }
+
+    /// I5: keeps tool work and its telemetry alive when the caller stops waiting.
+    fn spawn_tool(
+        &self,
+        acting: &Actor,
+        call: &crate::provider::ToolCall,
+        ledger: Ledger,
+    ) -> tokio::task::JoinHandle<(wrapper::Outcome, Ledger)> {
+        // On its own task, so a commit the deadline overtakes still completes.
+        let (tools, store, actor) = (self.tools.clone(), Arc::clone(&self.store), acting.clone());
+        let (name, arguments) = (call.name.clone(), call.arguments.clone());
+        let mut held = ledger;
+        let span = tracing::info_span!("assistant tool", sentry.op = "gen_ai.execute_tool",
+            sentry.name = %format!("execute_tool {name}"), gen_ai.operation.name = "execute_tool",
+            gen_ai.tool.name = %name, gen_ai.tool.input = %arguments,
+            gen_ai.tool.output = tracing::field::Empty, error = tracing::field::Empty,
+            sentry.status = tracing::field::Empty);
+        tokio::spawn(
+            async move {
+                let called = (name.as_str(), arguments);
+                let store = store.as_ref();
+                let outcome = wrapper::run(&tools, store, &actor, called, &mut held).await;
+                let span = tracing::Span::current();
+                span.record("error", outcome.answer.is_err());
+                let output = match &outcome.answer {
+                    Ok(value) => value.to_string(),
+                    Err(error) => {
+                        serde_json::to_string(error).unwrap_or_else(|_| error.to_string())
+                    }
+                };
+                span.record("gen_ai.tool.output", output);
+                span.record(
+                    "sentry.status",
+                    if outcome.answer.is_ok() {
+                        "ok"
+                    } else {
+                        "internal_error"
+                    },
+                );
+                if let Err(ToolError::Failed { message }) = &outcome.answer {
+                    tracing::error!(%message, "assistant tool failed");
+                }
+                (outcome, held)
+            }
+            .instrument(span),
+        )
     }
 
     /// One provider call, held to the provider call limit and what is left of the turn.

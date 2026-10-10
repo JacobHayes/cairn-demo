@@ -265,8 +265,31 @@ async fn require_actor<S: AuthStore + 'static>(
     let path = request.uri().path().to_owned();
     match auth.authenticate_request(presented).await {
         Ok(Some(actor)) => {
+            let user = auth
+                .inner
+                .accounts
+                .store()
+                .user(&actor.user)
+                .await
+                .ok()
+                .flatten();
+            let identities = auth
+                .inner
+                .accounts
+                .store()
+                .identities_of(&actor.user)
+                .await
+                .unwrap_or_default();
+            let email = identities
+                .iter()
+                .flat_map(|identity| &identity.verified_emails)
+                .next()
+                .map(ToString::to_string);
+            let span = tracing::info_span!("authenticated", user.id = %actor.user,
+                user.username = user.as_ref().map(|user| user.name.as_str()),
+                user.email = email.as_deref());
             request.extensions_mut().insert(actor);
-            next.run(request).await
+            tracing::Instrument::instrument(next.run(request), span).await
         }
         Ok(None) => auth.challenge(&path, None, false),
         Err(Refusal::Credential) => {

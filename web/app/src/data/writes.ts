@@ -3,6 +3,7 @@
 // retry with the page engine's touched-set check, its save recorded with the warnings it caused (D7). Version skew
 // stops it before anything is sent, and stops automatic retries mid-way (ARCHITECTURE, Web
 // UI). Committed state always comes from the host: the tick that follows refetches it.
+import * as Sentry from "@sentry/react";
 import { submit, type HttpFailure, type Schema } from "@cairn/client";
 
 import type { Host, Markdown, Patch } from "./host.ts";
@@ -171,12 +172,17 @@ export async function write(env: WriteEnv, intent: WriteIntent): Promise<WriteRe
     return { outcome: "stopped" };
   }
   const began = env.activity.begin();
+  const started = performance.now();
   const submitted = await sync.track(
     submit(patchOf(intent), (patch) => host.send(patch, intent.note), {
       overlaps: host.overlaps,
       mayRetry: () => !skew.latched,
     }),
   );
+  Sentry.metrics.count("cairn.write", 1, { attributes: { outcome: submitted.outcome } });
+  Sentry.metrics.distribution("cairn.write.duration", performance.now() - started, { unit: "millisecond" });
+  if (submitted.outcome === "failed") Sentry.logger.error("Write failed", { message: submitted.error.message, status: submitted.error.status });
+  else Sentry.logger.info("Write answered", { outcome: submitted.outcome });
   switch (submitted.outcome) {
     case "landed": {
       const warning = recordSave(env, describe(intent, titleOf), consequenceLines(submitted.answer), unlockedOf(intent, submitted.answer, began));

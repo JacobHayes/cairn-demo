@@ -72,6 +72,18 @@ struct DemoArgument {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    let _sentry = match telemetry::init_sentry() {
+        Ok(guard) => guard,
+        Err(error) => {
+            eprintln!("cairn: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    telemetry::init_logs();
+    telemetry::install_panic_policy();
+    let chaos = std::env::var("CAIRN_CHAOS").is_ok_and(|value| value == "1" || value == "true");
+    cairn_api::chaos::configure(chaos);
+    cairn_store_turso::configure_latency(chaos);
     let outcome = match cli.command {
         Command::Version => {
             println!(
@@ -88,6 +100,7 @@ fn main() -> ExitCode {
         Command::Serve(argument) => load(&argument).and_then(|config| runtime(serve(config))),
         Command::Demo(argument) => runtime(demo(argument.listen)),
     };
+    telemetry::flush();
     match outcome {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
@@ -162,7 +175,6 @@ async fn migrate(config: Config) -> Result<(), String> {
 
 /// `serve`, until SIGINT or SIGTERM.
 async fn serve(config: Config) -> Result<(), String> {
-    telemetry::init_logs();
     // Opened once: a failed open stops the process, never a retry here, since Turso cannot
     // open again in a process a failed open ran in, and some open failures are not
     // recoverable at all
@@ -176,7 +188,6 @@ async fn serve(config: Config) -> Result<(), String> {
 
 /// `demo`, until SIGINT or SIGTERM.
 async fn demo(listen: SocketAddr) -> Result<(), String> {
-    telemetry::init_logs();
     let config = demo::config(listen)?;
     let (store, routes) = demo::parts(&config).await?;
     run(&config, store, routes).await
@@ -187,8 +198,7 @@ async fn run<S: Store + 'static>(
     store: Arc<S>,
     beside: Router,
 ) -> Result<(), String> {
-    telemetry::install_panic_policy();
-    let metrics = telemetry::install_metrics().map_err(|error| error.to_string())?;
+    let metrics = telemetry::install_metrics()?;
     root::serve(config, store, beside, metrics, stopped())
         .await
         .map_err(|error| stopped_by(&error))

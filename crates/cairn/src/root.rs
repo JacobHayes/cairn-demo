@@ -193,7 +193,11 @@ pub fn app<S: Store + 'static>(
     // Metrics and the UI sit beside the API under its request limits: the in-flight limit
     // is per process, whatever the path. The UI answers every path the API does not keep.
     let app = cairn_api::router_beside(service, &auth, assistant, metrics, Some(ui));
-    Ok(AllowedHosts::new(&config.public_url, config.listen).guard(app))
+    Ok(AllowedHosts::new(&config.public_url, config.listen)
+        .guard(app)
+        .layer(axum::middleware::from_fn(telemetry::request_session))
+        .layer(sentry::integrations::tower::SentryHttpLayer::new().enable_transaction())
+        .layer(sentry::integrations::tower::NewSentryLayer::new_from_top()))
 }
 
 /// `cairn serve` and `cairn demo`: assembles the server over `store` with the embedded web
@@ -251,6 +255,7 @@ pub async fn serve<S: Store + 'static>(
     let served = listener::serve(listener, app, stop)
         .await
         .map_err(StartupError::Serve);
+    telemetry::flush();
     store.health().map_err(StartupError::Store)?;
     served
 }

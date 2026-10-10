@@ -27,6 +27,7 @@ pub const INDEX: &str = "index.html";
 #[derive(rust_embed::RustEmbed)]
 #[folder = "../../web/app/dist/build/"]
 #[allow_missing = true]
+#[exclude = "*.map"]
 struct WebBuild;
 
 /// The web build's digest from build.rs: reading it makes the folder's contents an input of
@@ -138,7 +139,17 @@ impl Served {
     }
 
     fn response(&self) -> Response {
-        (self.headers.clone(), self.bytes.clone()).into_response()
+        let mut response = (self.headers.clone(), self.bytes.clone()).into_response();
+        if self.headers[0]
+            .1
+            .to_str()
+            .is_ok_and(|value| value.starts_with("text/html"))
+        {
+            response
+                .headers_mut()
+                .insert("document-policy", HeaderValue::from_static("js-profiling"));
+        }
+        response
     }
 
     fn handler(self) -> MethodRouter {

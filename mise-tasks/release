@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+#MISE description="Build a revision, upload symbols and source maps, and register its release"
+set -euo pipefail
+cd "$(dirname "$0")/.."
+repository=$PWD
+[[ $# -le 1 ]] || { echo "Usage: mise run release [revision]" >&2; exit 1; }
+: "${SENTRY_AUTH_TOKEN:?Set SENTRY_AUTH_TOKEN}"
+: "${SENTRY_ORG:?Set SENTRY_ORG}"
+: "${SENTRY_PROJECT:?Set SENTRY_PROJECT for the backend}"
+: "${SENTRY_PROJECT_WEB:?Set SENTRY_PROJECT_WEB for the browser}"
+: "${SENTRY_ENVIRONMENT:?Set SENTRY_ENVIRONMENT}"
+revision=$(jj log --no-graph -r "${1:-@-}" -T 'commit_id' )
+[[ $revision =~ ^[0-9a-f]{40}$ ]] || { echo "release: select exactly one revision" >&2; exit 1; }
+workspace_parent=$(mktemp -d)
+workspace_name="release-$(basename "$workspace_parent")"
+cleanup() {
+  cd "$repository"
+  jj workspace forget "$workspace_name"
+  rm -rf "$workspace_parent"
+}
+# A workspace's empty child is never used for release identity; both builds name its parent.
+jj workspace add --no-colocate --name "$workspace_name" -r "$revision" "$workspace_parent/source"
+trap cleanup EXIT
+cd "$workspace_parent/source"
+# The selected repository revision supplies the build tasks and pinned tools.
+export MISE_TRUSTED_CONFIG_PATHS="${MISE_TRUSTED_CONFIG_PATHS:+$MISE_TRUSTED_CONFIG_PATHS:}$PWD"
+version=$(node -e 'const fs = require("node:fs"); console.log(fs.readFileSync("Cargo.toml", "utf8").match(/^version = "([^"]+)"/m)[1])')
+export SENTRY_RELEASE="cairn@$version+${revision:0:12}"
+export VITE_SENTRY_RELEASE=$SENTRY_RELEASE
+export VITE_SENTRY_ENVIRONMENT=${VITE_SENTRY_ENVIRONMENT:-$SENTRY_ENVIRONMENT}
+echo "Release $SENTRY_RELEASE"
+npm ci --no-audit --no-fund
+
+# Prepare the exact assets to embed. The later build uploads maps for identical bytes.
+(env -u SENTRY_AUTH_TOKEN mise run build:web)
+assets_digest() {
+  node -e 'const fs=require("node:fs"),path=require("node:path"),crypto=require("node:crypto"); const hash=crypto.createHash("sha256"); function walk(dir){for(const name of fs.readdirSync(dir).sort()){const file=path.join(dir,name);if(fs.statSync(file).isDirectory())walk(file);else {hash.update(file);hash.update(fs.readFileSync(file));}}}walk("web/app/dist/build");console.log(hash.digest("hex"))'
+}
+assets_before=$(assets_digest)
+# Relative DWARF paths resolve here during --include-sources, before workspace cleanup.
+# Dependency sources use stable paths too, backed by links while the uploader bundles them.
+cargo_sources=${CARGO_HOME:-$HOME/.cargo}
+mkdir -p cargo
+ln -s "$cargo_sources/registry" cargo/registry
+ln -s "$cargo_sources/git" cargo/git
+RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--remap-path-prefix=$PWD= --remap-path-prefix=$cargo_sources/registry=cargo/registry --remap-path-prefix=$cargo_sources/git=cargo/git" \
+  cargo build --locked --release -p cairn
+binary=$(cargo metadata --locked --no-deps --format-version 1 | node -e 'let data=""; process.stdin.on("data",chunk=>data+=chunk).on("end",()=>console.log(JSON.parse(data).target_directory+"/release/cairn"))')
+
+sentry-cli releases new -p "$SENTRY_PROJECT" -p "$SENTRY_PROJECT_WEB" "$SENTRY_RELEASE"
+sentry-cli releases set-commits "$SENTRY_RELEASE" --commit "JacobHayes/cairn-demo@$revision"
+sentry-cli debug-files upload --include-sources "$binary"
+npm run build --workspace web/app
+assets_after=$(assets_digest)
+if [[ "$assets_before" != "$assets_after" ]]; then
+  echo "release: the uploaded frontend differs from the embedded frontend" >&2
+  exit 1
+fi
+output="$repository/dist/cairn-$SENTRY_RELEASE"
+mkdir -p "$repository/dist"
+cp "$binary" "$output"
+strip --strip-debug --strip-unneeded "$output"
+sentry-cli releases finalize "$SENTRY_RELEASE"
+sentry-cli releases deploys new -r "$SENTRY_RELEASE" -e "$SENTRY_ENVIRONMENT"
+echo "Release $SENTRY_RELEASE: $output"

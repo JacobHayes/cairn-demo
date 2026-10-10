@@ -13,6 +13,7 @@
 #![forbid(unsafe_code)]
 
 pub mod admission;
+pub mod chaos;
 pub mod client;
 pub mod endpoints;
 pub mod error;

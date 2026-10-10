@@ -6,6 +6,9 @@ import "@design/tokens.css";
 import "@design/base.css";
 import "./ui/app.css";
 
+import * as Sentry from "@sentry/react";
+import { initTelemetry } from "./telemetry.ts";
+
 import { lazy, StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router";
@@ -19,6 +22,9 @@ import { Home } from "./journeys/Home.tsx";
 import { JourneyIndex } from "./journeys/JourneyIndex.tsx";
 import { BarePageRoute, JourneyDeepLink, JourneyLanding, JourneyPageRoute, LegacyRoute, RouteNodeRedirect, SummaryRoute } from "./screens/JourneyRoutes.tsx";
 import { Shell } from "./shell/Shell.tsx";
+
+initTelemetry();
+const SentryRoutes = Sentry.wrapReactRouterRouting(Routes);
 
 const MineScreen = lazy(() => import("./journeys/MineScreen.tsx").then((module) => ({ default: module.MineScreen })));
 const NewJourney = lazy(() => import("./journeys/NewJourney.tsx").then((module) => ({ default: module.NewJourney })));
@@ -34,7 +40,8 @@ function App({ session, layouts }: { session: Session; layouts: Layouts }) {
     <SessionContext value={session}>
       <LayoutsContext value={layouts}>
         <BrowserRouter>
-          <Routes>
+          <Sentry.ErrorBoundary fallback={<main className="stack panel" role="alert"><h1>This screen could not open</h1><p className="muted">Reload to return to your work.</p><button type="button" onClick={() => { location.reload(); }}>Reload</button></main>}>
+          <SentryRoutes>
             <Route element={<Shell />}>
               <Route index element={<Home />} />
               <Route path="journeys" element={<JourneyIndex />} />
@@ -66,7 +73,8 @@ function App({ session, layouts }: { session: Session; layouts: Layouts }) {
               <Route path="proposals/:id" element={<ProposalScreen />} />
               <Route path="proposals/:id/nodes/:key" element={<ProposalScreen />} />
             </Route>
-          </Routes>
+          </SentryRoutes>
+          </Sentry.ErrorBoundary>
         </BrowserRouter>
       </LayoutsContext>
     </SessionContext>
@@ -77,7 +85,16 @@ const container = document.getElementById("root");
 if (container === null) {
   throw new Error("index.html has no #root");
 }
-const root = createRoot(container);
+// React's root hooks allow an explicitly undefined stack; Sentry's ErrorInfo uses null.
+const reportReactError = Sentry.reactErrorHandler();
+const reactErrorHandler = (error: unknown, info: { componentStack?: string | undefined }) => {
+  reportReactError(error, { componentStack: info.componentStack ?? null });
+};
+const root = createRoot(container, {
+  onUncaughtError: reactErrorHandler,
+  onCaughtError: reactErrorHandler,
+  onRecoverableError: reactErrorHandler,
+});
 boot().then(
   (session) => {
     root.render(
@@ -87,6 +104,7 @@ boot().then(
     );
   },
   (thrown: unknown) => {
+    Sentry.captureException(thrown);
     root.render(
       <p className="callout callout-bad" role="alert">
         Cairn could not start: {thrown instanceof Error ? thrown.message : String(thrown)}

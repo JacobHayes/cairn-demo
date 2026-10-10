@@ -124,7 +124,7 @@ impl From<ServiceError> for ApiError {
             } => {
                 // PRACTICES, Programmer errors panic: logged with the domain and, through
                 // the request's span, its id; counted; answered 500 with the request id.
-                tracing::error!(%domain, %message, "the engine panicked");
+                tracing::error!(target: "cairn_api::engine_panic", %domain, %message, "the engine panicked");
                 metrics::counter!(observe::ENGINE_PANICS).increment(1);
                 ApiError::problem(ProblemCode::EnginePanic, error.to_string())
             }

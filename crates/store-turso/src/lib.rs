@@ -73,19 +73,30 @@ impl std::fmt::Debug for TursoStore {
 /// on disk.
 macro_rules! read {
     ($store:expr, $connection:ident => $body:expr) => {{
-        let lease = $store.pool.acquire().await?;
-        let $connection = lease.connection();
-        execute($connection, "BEGIN", Vec::new()).await?;
-        let result = $body.await;
-        let end = if result.is_ok() { "COMMIT" } else { "ROLLBACK" };
-        match execute($connection, end, Vec::new()).await {
-            Ok(_) => {
-                lease.release();
-                $store.durability.still_open().and(result)
-            }
-            // Dropping the lease ends what the connection held.
-            Err(error) => result.and(Err(StoreError::from(error))),
-        }
+        tracing::Instrument::instrument(
+            async {
+                let lease = $store.pool.acquire().await?;
+                let $connection = lease.connection();
+                execute($connection, "BEGIN", Vec::new()).await?;
+                let result = $body.await;
+                let end = if result.is_ok() { "COMMIT" } else { "ROLLBACK" };
+                match execute($connection, end, Vec::new()).await {
+                    Ok(_) => {
+                        lease.release();
+                        $store.durability.still_open().and(result)
+                    }
+                    // Dropping the lease ends what the connection held.
+                    Err(error) => result.and(Err(StoreError::from(error))),
+                }
+            },
+            tracing::info_span!(
+                "read transaction",
+                sentry.op = "db.transaction",
+                sentry.name = "read",
+                db.system = "sqlite"
+            ),
+        )
+        .await
     }};
 }
 
@@ -93,6 +104,7 @@ macro_rules! read {
 /// connection: the record operations outside every domain, which carry no revision.
 macro_rules! in_transaction {
     ($store:expr, $connection:ident => $body:expr) => {{
+        tracing::Instrument::instrument(async {
         let lease = $store.pool.acquire().await?;
         // After the wait for a connection, so a call queued when the store closed writes
         // nothing.
@@ -122,6 +134,7 @@ macro_rules! in_transaction {
         };
         lease.release();
         result
+        }, tracing::info_span!("write transaction", sentry.op = "db.transaction", sentry.name = "write", db.system = "sqlite")).await
     }};
 }
 
@@ -437,5 +450,21 @@ impl ConversationStore for TursoStore {
 
     async fn remove_conversation(&self, id: &ConversationId) -> Result<bool, StoreError> {
         in_transaction!(self, connection => records::remove_conversation(connection, id))
+    }
+}
+
+/// Enables occasional store latency, configured once by the host at startup.
+pub fn configure_latency(enabled: bool) {
+    LATENCY.store(enabled, std::sync::atomic::Ordering::Relaxed);
+}
+
+static LATENCY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+async fn wait_for_store() {
+    if LATENCY.load(std::sync::atomic::Ordering::Relaxed) {
+        let mut draw = [0_u8; 1];
+        if getrandom::fill(&mut draw).is_ok() && draw[0] < 5 {
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
     }
 }

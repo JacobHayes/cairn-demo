@@ -278,6 +278,8 @@ impl<S: Store> Service<S> {
         };
         match self.store.commit(commit).await {
             Ok(Committed::Applied(receipt)) => {
+                #[cfg(not(target_arch = "wasm32"))]
+                metrics::counter!("cairn_write_commits_total").increment(1);
                 assert_eq!(
                     receipt,
                     applied.change_set().receipt,

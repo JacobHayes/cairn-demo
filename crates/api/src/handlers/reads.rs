@@ -21,6 +21,7 @@ pub async fn journeys<S: Store + 'static>(
     State(api): State<Api<S>>,
     RawQuery(raw): RawQuery,
 ) -> Answer<JourneyPage> {
+    crate::chaos::available()?;
     let params = Params::parse(raw.as_deref(), query::JOURNEY_PARAMS)?;
     let page = api.service.journeys(&query::journeys(&params)?).await?;
     Ok(Json(JourneyPage {
@@ -59,6 +60,7 @@ pub async fn routes<S: Store + 'static>(
     State(api): State<Api<S>>,
     RawQuery(raw): RawQuery,
 ) -> Answer<RoutePage> {
+    crate::chaos::available()?;
     let params = Params::parse(raw.as_deref(), query::ROUTE_PARAMS)?;
     let (kind, after, size) = query::routes(&params)?;
     let page = api.service.routes(kind, after.as_ref(), size).await?;
@@ -127,6 +129,7 @@ pub async fn search<S: Store + 'static>(
     State(api): State<Api<S>>,
     RawQuery(raw): RawQuery,
 ) -> Answer<SearchPage> {
+    crate::chaos::search_ready().await;
     let params = Params::parse(raw.as_deref(), query::SEARCH_PARAMS)?;
     let page = api.service.search(&query::search(&params)?).await?;
     Ok(Json(page.into()))

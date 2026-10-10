@@ -12,3 +12,6 @@ rust = { version = "1.99.0", profile = "minimal", components = "clippy,rustfmt",
 # source once at the same revision as the SDK git dependencies in Cargo.toml. Only
 # `mise run sim` uses it; the check ladder never does.
 "cargo:https://github.com/JacobHayes/patina" = { version = "rev:6a2977e7bce794d15eabaa18258a5542115bd872", crate = "cargo-patina", locked = true }
+
+# Release identity, native debug files and deployment registration.
+"aqua:getsentry/sentry-cli" = "3.8.0"

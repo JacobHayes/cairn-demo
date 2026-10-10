@@ -2,6 +2,7 @@
 // entities their verified emails name, which "mine" covers together and which, when there
 // are two or more, are offered for merging. Which entities hold which emails is the
 // deployment's, so a newer deployment held (deployment-store.ts) refetches it (H6).
+import * as Sentry from "@sentry/react";
 import { Emitter } from "./emitter.ts";
 import type { DeploymentStore } from "./deployment-store.ts";
 import type { Host, Viewer } from "./host.ts";
@@ -43,7 +44,14 @@ export class ViewerStore extends Emitter {
     while (this.#dirty) {
       this.#dirty = false;
       try {
+        const previous = this.#current?.user;
         this.#current = await this.#host.viewer();
+        const viewer = this.#current;
+        const email = viewer.identities.flatMap((identity) => identity.verified_emails)[0];
+        const username = viewer.identities[0]?.subject;
+        Sentry.setUser({ id: viewer.user, ...(username === undefined ? {} : { username }),
+          ...(email === undefined ? {} : { email }) });
+        if (previous !== viewer.user) Sentry.logger.info("Signed in", { user_id: viewer.user });
         this.#failed = undefined;
       } catch (thrown) {
         this.#failed = thrown instanceof Error ? thrown.message : String(thrown);

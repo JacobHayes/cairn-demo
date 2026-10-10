@@ -68,7 +68,7 @@ metrics-exporter-prometheus = { version = "0.18.3", default-features = false }
 rust-embed = { version = "8.13.0", features = ["mime-guess"] }
 socket2 = { version = "0.6.5", features = ["all"] }
 toml = { version = "1.1.8", default-features = false, features = ["parse", "serde", "std"] }
-tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "json", "std"] }
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "json", "std", "registry"] }
 jsonschema = { version = "0.58.6", default-features = false }
 # The MCP endpoint (ARCHITECTURE, MCP endpoint names it): rmcp's server over Streamable HTTP
 # as a tower service the API mounts; its client only drives the endpoint in tests.
@@ -139,6 +139,9 @@ debug = false
 # The browser host's build (brief 4.5): the release profile, its symbols stripped and linked
 # as one unit, so the module the page downloads is small. The wasm build task uses it for the
 # release build and in CI (CAIRN_WASM_PROFILE=wasm); the link takes most of a minute.
+[profile.release]
+debug = true
+
 [profile.wasm]
 inherits = "release"
 strip = true

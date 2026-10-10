@@ -3,6 +3,7 @@
 // flight, and any turn the host answered but did not keep. A panel closed while a turn runs
 // shows its answer when opened again, and a read begun before an answer arrived never
 // replaces the answer.
+import * as Sentry from "@sentry/react";
 import type { HttpFailure } from "@cairn/client";
 
 import { targetKey, type AssistantHost, type AssistantTarget, type Conversation } from "../data/assistant.ts";
@@ -82,7 +83,11 @@ export class AssistantConversation extends Emitter {
       return false;
     }
     this.#set({ sending: text, failure: undefined });
+    Sentry.logger.info("Assistant turn started");
     const turned = await this.#assistant.turn(this.#target, text);
+    Sentry.metrics.count("cairn.assistant.turn", 1, { attributes: { outcome: turned.outcome } });
+    if (turned.outcome === "failed") Sentry.logger.error("Assistant turn failed", { message: turned.error.message });
+    else Sentry.logger.info("Assistant turn answered", { ended: turned.reply.ended });
     if (turned.outcome === "failed") {
       this.#set({ sending: undefined, failure: turned.error });
       return false;

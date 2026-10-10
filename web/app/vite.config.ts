@@ -7,7 +7,10 @@
 // server runs the server host when it proxies to one and the in-browser host when it does
 // not; `vite build` makes the build the binary embeds, on the server host, and `vite build
 // --mode demo` the static demo site, on the in-browser host.
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, rmSync } from "node:fs";
+import { resolve } from "node:path";
+import { execFileSync } from "node:child_process";
+import { sentryVitePlugin } from "@sentry/vite-plugin";
 import { fileURLToPath } from "node:url";
 
 import react from "@vitejs/plugin-react";
@@ -55,12 +58,44 @@ if (server !== undefined) {
   }
 }
 
+// Both builds derive their default identity from the workspace version and revision.
+const version = readFileSync(new URL("../../Cargo.toml", import.meta.url), "utf8").match(/^version = "([^"]+)"/m)?.[1];
+const release = process.env["VITE_SENTRY_RELEASE"] ?? process.env["SENTRY_RELEASE"] ?? `cairn@${version ?? "unknown"}+${execFileSync("git", ["rev-parse", "--short=12", "HEAD"], { cwd: DESIGN }).toString().trim()}`;
+
+function discardMaps(directory: string): void {
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const path = `${directory}/${entry.name}`;
+    if (entry.isDirectory()) discardMaps(path);
+    else if (entry.name.endsWith(".map")) rmSync(path);
+  }
+}
+
+// Cleanup also runs on offline builds, where the upload integration has no credentials.
+function privateMaps(): Plugin {
+  let output = "";
+  return {
+    name: "cairn:private-source-maps",
+    apply: "build",
+    configResolved(config) { output = resolve(config.root, config.build.outDir); },
+    closeBundle: { order: "post", sequential: true, handler() { discardMaps(output); } },
+  };
+}
+
 export default defineConfig(({ command, mode }) => ({
   define: {
+    "import.meta.env.VITE_SENTRY_RELEASE": JSON.stringify(release),
     __CAIRN_HOST__: JSON.stringify(command === "serve" ? (server === undefined ? "browser" : "server") : mode === "demo" ? "browser" : "server"),
   },
   root: fileURLToPath(new URL(".", import.meta.url)),
-  plugins: [react(), fontLicense()],
+  plugins: [react(), fontLicense(), sentryVitePlugin({
+    authToken: process.env["SENTRY_AUTH_TOKEN"],
+    ...(process.env["SENTRY_ORG"] === undefined ? {} : { org: process.env["SENTRY_ORG"] }),
+    ...(process.env["SENTRY_PROJECT_WEB"] === undefined ? {} : { project: process.env["SENTRY_PROJECT_WEB"] }),
+    telemetry: false,
+    silent: !process.env["SENTRY_AUTH_TOKEN"],
+    release: { name: release, create: false, finalize: false },
+    sourcemaps: { disable: process.env["SENTRY_AUTH_TOKEN"] ? false : "disable-upload", filesToDeleteAfterUpload: ["dist/build/**/*.map", "dist/demo/**/*.map"] },
+  }), privateMaps()],
   resolve: { alias: [{ find: "@design", replacement: DESIGN }, { find: /^.*\/generated\/cairn_wasm\.js$/, replacement: `${BINDGEN}/cairn_wasm.js` }] },
   logLevel: "warn",
   // `mise run build:web` writes dist/build/, which the binary embeds (crates/cairn/src/assets.rs),
@@ -68,6 +103,7 @@ export default defineConfig(({ command, mode }) => ({
   build: {
     outDir: mode === "demo" ? "dist/demo" : "dist/build",
     emptyOutDir: true,
+    sourcemap: "hidden",
     // React and the router are most of what every page loads and change only with an upgrade, so
     // they are one chunk of their own (cached across the app's releases); the screens and the
     // graph (main.tsx, Projections.tsx) are loaded when first opened.

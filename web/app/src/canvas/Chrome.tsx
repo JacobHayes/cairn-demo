@@ -4,6 +4,7 @@
 import { Panel } from "@xyflow/react";
 import type { ReactNode } from "react";
 
+import { flag } from "../flags.ts";
 import { Menu } from "../screens/Menu.tsx";
 import { Button, Segmented } from "../ui/kit.tsx";
 import { STEP_WORDS } from "./ladder.ts";
@@ -17,7 +18,7 @@ import { LENSES, type Lens, type Step } from "./model.ts";
 export function Ladder({ steps, step, onStep, children }: { steps: readonly Step[]; step: Step; onStep: (step: Step) => void; children?: ReactNode }) {
   return (
     <Panel position="top-left" className="canvas-panel canvas-top">
-      <Segmented label="Detail" value={step} options={steps.map((each) => ({ value: each, label: STEP_WORDS[each] }))} onChange={onStep} data-testid="ladder" />
+      <Segmented label="Detail" value={step} options={steps.map((each) => ({ value: each, label: flag("graph-ladder-v2") ? `${String(steps.indexOf(each) + 1)}. ${STEP_WORDS[each]}` : STEP_WORDS[each] }))} onChange={onStep} data-testid="ladder" />
       {children}
     </Panel>
   );

@@ -121,10 +121,12 @@ async fn submit<S: Store + 'static>(
 pub(crate) async fn committed<T: Send + 'static>(
     write: impl Future<Output = T> + Send + 'static,
 ) -> Result<T, ApiError> {
-    tokio::spawn(write).await.map_err(|error| {
-        tracing::error!(%error, "a write task failed");
-        ApiError::problem(ProblemCode::Internal, "the write task failed")
-    })
+    tokio::spawn(tracing::Instrument::in_current_span(write))
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "a write task failed");
+            ApiError::problem(ProblemCode::Internal, "the write task failed")
+        })
 }
 
 /// A domain write's outcome, as the patch count and logs name it.

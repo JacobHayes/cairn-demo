@@ -49,6 +49,10 @@ pub enum Message {
 /// A model's answer.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Reply {
+    /// The model the provider actually used, when reported (I5).
+    pub model: Option<String>,
+    /// Token accounting returned by the provider (I5).
+    pub usage: Option<Usage>,
     /// What it said, if anything.
     pub text: Option<String>,
     /// The tools it called, in order; none ends the turn.
@@ -57,6 +61,25 @@ pub struct Reply {
     /// turn continues (reasoning a provider asks to see again rides here); `None` when the
     /// message was built from Cairn's types alone. Never stored.
     pub raw: Option<Value>,
+}
+
+/// Token accounting for a completed model call (I5).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Usage {
+    /// Input tokens, including cached input.
+    pub input: u64,
+    /// Output tokens.
+    pub output: u64,
+    /// Total tokens.
+    pub total: u64,
+    /// Provider-reported cost in USD, when available.
+    pub cost_usd: Option<f64>,
+    /// Cached input tokens, a subset of input.
+    pub cache_read_input: Option<u64>,
+    /// Tokens written to the input cache.
+    pub cache_creation_input: Option<u64>,
+    /// Reasoning tokens, a subset of output.
+    pub reasoning_output: Option<u64>,
 }
 
 /// One tool call.

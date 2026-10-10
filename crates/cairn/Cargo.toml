@@ -32,7 +32,8 @@ metrics-exporter-prometheus.workspace = true
 openidconnect.workspace = true
 # debug-embed: debug builds embed the web build too, rather than read it at run time from an
 # absolute path baked into the compile, which a cached compile can carry from another checkout.
-rust-embed = { workspace = true, features = ["debug-embed"] }
+rust-embed = { workspace = true, features = ["debug-embed", "include-exclude"] }
+sentry = { version = "0.49.3", default-features = false, features = ["backtrace", "contexts", "panic", "debug-images", "reqwest", "rustls", "tracing", "tower", "tower-http", "tower-axum-matched-path", "logs", "metrics", "release-health"] }
 serde.workspace = true
 serde_json.workspace = true
 socket2.workspace = true

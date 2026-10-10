@@ -190,6 +190,8 @@ pub(crate) fn timestamp(nanoseconds: i64) -> Result<Timestamp, StoreError> {
 }
 
 /// Runs a statement.
+#[tracing::instrument(level = "info", skip_all,
+    fields(sentry.op = "db.sql.query", sentry.name = sql, db.system = "sqlite", db.statement = sql))]
 pub(crate) async fn execute(
     connection: &Connection,
     sql: &str,
@@ -199,6 +201,8 @@ pub(crate) async fn execute(
 }
 
 /// Runs a query and collects every row.
+#[tracing::instrument(level = "info", skip_all,
+    fields(sentry.op = "db.sql.query", sentry.name = sql, db.system = "sqlite", db.statement = sql))]
 pub(crate) async fn rows(
     connection: &Connection,
     sql: &str,

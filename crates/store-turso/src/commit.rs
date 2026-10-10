@@ -129,6 +129,8 @@ async fn rollback(connection: &Connection) {
     let _ = execute(connection, "ROLLBACK", Vec::new()).await;
 }
 
+#[tracing::instrument(level = "info", skip_all,
+    fields(sentry.op = "db.transaction", sentry.name = "commit", db.system = "sqlite"))]
 async fn attempt(
     connection: &Connection,
     durability: &Durability,

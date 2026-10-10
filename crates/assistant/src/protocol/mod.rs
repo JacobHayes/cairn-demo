@@ -10,7 +10,8 @@ pub mod openai;
 
 use std::fmt;
 
-use serde_json::Value;
+use serde_json::{Value, json};
+use tracing::Instrument;
 use url::Url;
 
 use crate::limits::PROVIDER_RESPONSE_BYTES_MAX;
@@ -89,44 +90,109 @@ impl HttpProvider {
     async fn call(&self, exchange: &Exchange) -> Result<Reply, ProviderError> {
         let model = &self.config.model;
         let key = self.config.credential.as_ref().map(Credential::expose);
-        let (body, headers) = match self.config.protocol {
+        let (mut body, headers) = match self.config.protocol {
             Protocol::AnthropicMessages => {
                 (anthropic::request(model, exchange), anthropic::headers(key))
             }
             Protocol::OpenaiResponses => (openai::request(model, exchange), bearer(key)),
             Protocol::ChatCompletions => (chat::request(model, exchange), bearer(key)),
         };
-        let mut request = self
-            .client
-            .post(self.url())
-            .header("content-type", "application/json")
-            .body(body.to_string());
-        for (name, value) in headers {
-            request = request.header(name, value);
+        chat::include_usage(&mut body, self.config.protocol, &self.config.endpoint);
+        let url = self.url();
+        let host = self.config.endpoint.host_str().unwrap_or("unknown");
+        let http = tracing::info_span!("provider POST", sentry.op = "http.client",
+            sentry.name = %format!("POST {host}{}", url::Url::parse(&url).map(|url| url.path().to_owned()).unwrap_or_default()),
+            http.request.method = "POST", url.full = %url, server.address = host,
+            http.response.status_code = tracing::field::Empty, sentry.status = tracing::field::Empty);
+        async {
+            let mut request = self
+                .client
+                .post(&url)
+                .header("content-type", "application/json")
+                .body(body.to_string());
+            for (name, value) in headers {
+                request = request.header(name, value);
+            }
+            let response = request.send().await.map_err(transport)?;
+            let status = response.status();
+            tracing::Span::current().record("http.response.status_code", status.as_u16());
+            tracing::Span::current().record(
+                "sentry.status",
+                if status.is_success() {
+                    "ok"
+                } else {
+                    "internal_error"
+                },
+            );
+            let bytes = read_bounded(response, PROVIDER_RESPONSE_BYTES_MAX).await?;
+            let answer: Value =
+                serde_json::from_slice(&bytes).map_err(|error| ProviderError::Failed {
+                    message: format!("status {status}: the answer is not JSON: {error}"),
+                })?;
+            if !status.is_success() {
+                return Err(ProviderError::Failed {
+                    message: format!("status {status}: {}", error_message(&answer)),
+                });
+            }
+            match self.config.protocol {
+                Protocol::AnthropicMessages => anthropic::reply(&answer),
+                Protocol::OpenaiResponses => openai::reply(&answer),
+                Protocol::ChatCompletions => chat::reply(&answer),
+            }
         }
-        let response = request.send().await.map_err(transport)?;
-        let status = response.status();
-        let bytes = read_bounded(response, PROVIDER_RESPONSE_BYTES_MAX).await?;
-        let answer: Value =
-            serde_json::from_slice(&bytes).map_err(|error| ProviderError::Failed {
-                message: format!("status {status}: the answer is not JSON: {error}"),
-            })?;
-        if !status.is_success() {
-            return Err(ProviderError::Failed {
-                message: format!("status {status}: {}", error_message(&answer)),
-            });
-        }
-        match self.config.protocol {
-            Protocol::AnthropicMessages => anthropic::reply(&answer),
-            Protocol::OpenaiResponses => openai::reply(&answer),
-            Protocol::ChatCompletions => chat::reply(&answer),
-        }
+        .instrument(http)
+        .await
     }
 }
 
 impl Provider for HttpProvider {
     fn send<'a>(&'a self, exchange: &'a Exchange) -> Answer<'a> {
-        Box::pin(self.call(exchange))
+        let provider = match self.config.protocol {
+            Protocol::AnthropicMessages => "anthropic",
+            Protocol::OpenaiResponses => "openai",
+            Protocol::ChatCompletions => self.config.endpoint.host_str().unwrap_or("openai"),
+        };
+        let span = tracing::info_span!("model call", sentry.op = "gen_ai.chat",
+            sentry.name = %format!("chat {}", self.config.model),
+            gen_ai.operation.name = "chat", gen_ai.provider.name = provider,
+            gen_ai.request.model = %self.config.model,
+            gen_ai.response.model = tracing::field::Empty,
+            gen_ai.usage.input_tokens = tracing::field::Empty,
+            gen_ai.usage.output_tokens = tracing::field::Empty,
+            gen_ai.usage.total_tokens = tracing::field::Empty,
+            gen_ai.cost.total_tokens = tracing::field::Empty,
+            gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
+            gen_ai.usage.cache_creation.input_tokens = tracing::field::Empty,
+            gen_ai.usage.reasoning.output_tokens = tracing::field::Empty,
+            gen_ai.request.max_tokens = tracing::field::Empty,
+            gen_ai.system_instructions = %exchange.system,
+            gen_ai.input.messages = %messages(exchange),
+            gen_ai.output.messages = tracing::field::Empty,
+            sentry.status = tracing::field::Empty);
+        Box::pin(async move {
+            let span = tracing::Span::current();
+            if self.config.protocol == Protocol::AnthropicMessages {
+                span.record("gen_ai.request.max_tokens", anthropic::REPLY_TOKEN_COUNT_MAX);
+            }
+            let answer = self.call(exchange).await;
+            match &answer {
+                Ok(reply) => {
+                    if let Some(model) = &reply.model { span.record("gen_ai.response.model", model.as_str()); }
+                    let output = json!([{"role": "assistant", "content": reply.text,
+                        "tool_calls": reply.calls.iter().map(|call| json!({"id":call.id,"name":call.name,"arguments":call.arguments})).collect::<Vec<_>>()}]);
+                    span.record("gen_ai.output.messages", output.to_string());
+                    span.record("sentry.status", "ok");
+                    if let Some(usage) = &reply.usage {
+                        record_usage(&span, usage, &self.config.model);
+                    }
+                }
+                Err(error) => {
+                    span.record("sentry.status", "internal_error");
+                    tracing::error!(%error, "model call failed");
+                }
+            }
+            answer
+        }.instrument(span))
     }
 }
 
@@ -204,4 +270,108 @@ pub(crate) fn arguments_from_text(text: &str) -> Value {
 /// A call's arguments as the JSON text these protocols send.
 pub(crate) fn arguments_as_text(arguments: &Value) -> String {
     arguments.to_string()
+}
+
+/// Provider usage is optional: absent counters remain absent, rather than invented zeros.
+fn usage(answer: &Value, anthropic: bool) -> Option<crate::provider::Usage> {
+    let usage = answer.get("usage")?;
+    let mut input = usage
+        .get("input_tokens")
+        .or_else(|| usage.get("prompt_tokens"))?
+        .as_u64()?;
+    let output = usage
+        .get("output_tokens")
+        .or_else(|| usage.get("completion_tokens"))?
+        .as_u64()?;
+    if anthropic {
+        input = input.checked_add(
+            usage
+                .get("cache_read_input_tokens")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+        )?;
+        input = input.checked_add(
+            usage
+                .get("cache_creation_input_tokens")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+        )?;
+    }
+    let total = match usage.get("total_tokens").and_then(Value::as_u64) {
+        Some(total) => total,
+        None => input.checked_add(output)?,
+    };
+    Some(crate::provider::Usage {
+        input,
+        output,
+        total,
+        cost_usd: usage
+            .get("cost")
+            .and_then(Value::as_f64)
+            .filter(|cost| cost.is_finite() && *cost >= 0.0),
+        cache_read_input: usage
+            .get("cache_read_input_tokens")
+            .and_then(Value::as_u64)
+            .or_else(|| {
+                usage
+                    .pointer("/prompt_tokens_details/cached_tokens")
+                    .and_then(Value::as_u64)
+            })
+            .or_else(|| {
+                usage
+                    .pointer("/input_tokens_details/cached_tokens")
+                    .and_then(Value::as_u64)
+            }),
+        cache_creation_input: usage
+            .get("cache_creation_input_tokens")
+            .and_then(Value::as_u64),
+        reasoning_output: usage
+            .pointer("/completion_tokens_details/reasoning_tokens")
+            .and_then(Value::as_u64)
+            .or_else(|| {
+                usage
+                    .pointer("/output_tokens_details/reasoning_tokens")
+                    .and_then(Value::as_u64)
+            }),
+    })
+}
+
+fn messages(exchange: &Exchange) -> Value {
+    use crate::provider::Message;
+    Value::Array(exchange.messages.iter().map(|message| match message {
+        Message::User { text } => json!({"role": "user", "content": text}),
+        Message::Assistant(reply) => json!({"role": "assistant", "content": reply.text,
+            "tool_calls": reply.calls.iter().map(|call| json!({"id":call.id,"name":call.name,"arguments":call.arguments})).collect::<Vec<_>>()}),
+        Message::ToolResults(results) => json!({"role":"tool", "content":results.iter().map(|result| json!({"tool_call_id":result.call_id,"content":result.content,"is_error":result.is_error})).collect::<Vec<_>>()}),
+    }).collect())
+}
+
+/// I5 and Non-functional: Observable: records actual model usage without inventing values.
+fn record_usage(span: &tracing::Span, usage: &crate::provider::Usage, model: &str) {
+    span.record("gen_ai.usage.input_tokens", usage.input);
+    span.record("gen_ai.usage.output_tokens", usage.output);
+    span.record("gen_ai.usage.total_tokens", usage.total);
+    if let Some(cost) = usage.cost_usd {
+        span.record("gen_ai.cost.total_tokens", cost);
+    }
+    for (name, value) in [
+        (
+            "gen_ai.usage.cache_read.input_tokens",
+            usage.cache_read_input,
+        ),
+        (
+            "gen_ai.usage.cache_creation.input_tokens",
+            usage.cache_creation_input,
+        ),
+        (
+            "gen_ai.usage.reasoning.output_tokens",
+            usage.reasoning_output,
+        ),
+    ] {
+        if let Some(value) = value {
+            span.record(name, value);
+        }
+    }
+    metrics::counter!("cairn_assistant_tokens_total", "model" => model.to_owned(), "direction" => "input").increment(usage.input);
+    metrics::counter!("cairn_assistant_tokens_total", "model" => model.to_owned(), "direction" => "output").increment(usage.output);
 }

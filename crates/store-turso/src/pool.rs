@@ -38,6 +38,7 @@ impl Pool {
 
     /// A connection, waiting at most the acquire limit for one to come free.
     pub async fn acquire(&self) -> Result<Lease<'_>, StoreError> {
+        crate::wait_for_store().await;
         let permit = tokio::time::timeout(STORE_CONNECTION_ACQUIRE, self.permits.acquire())
             .await
             .map_err(|_| StoreError::AcquireTimeout)?

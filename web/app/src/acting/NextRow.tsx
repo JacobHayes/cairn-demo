@@ -4,6 +4,7 @@
 import { useEffect, useRef, type MouseEvent } from "react";
 import { Link, useNavigate } from "react-router";
 
+import { flag } from "../flags.ts";
 import type { Ready } from "../detail/model.ts";
 import { statusTone, statusWord } from "../status/words.ts";
 import { Badge } from "../ui/kit.tsx";
@@ -45,6 +46,7 @@ export function NextRow({ view, row, to, selected, tag, sort, testId = "next-ite
     <li
       ref={item}
       className="next-row"
+      data-compact={flag("next-list-compact")}
       data-testid={testId}
       data-node={row.key}
       data-selected={selected}

@@ -129,6 +129,11 @@ pub fn reply(answer: &Value) -> Result<Reply, ProviderError> {
     }
     let text = (!texts.is_empty()).then(|| texts.join("\n\n"));
     Ok(Reply {
+        model: answer
+            .get("model")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        usage: super::usage(answer, true),
         text,
         calls,
         raw: Some(Value::Array(content.clone())),
