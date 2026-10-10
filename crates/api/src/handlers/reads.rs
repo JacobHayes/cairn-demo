@@ -3,11 +3,14 @@
 
 use axum::Json;
 use axum::extract::{Extension, RawQuery, State};
+use axum::http::{HeaderMap, HeaderValue, header::ETAG};
 use cairn_schema::{
     Actor, Deployment, DomainDocument, Entity, EntityKey, Journey, JourneyId, Route, RouteId,
     RouteVersion, VersionNumber,
 };
+use cairn_service::ServiceError;
 use cairn_store::Store;
+use cairn_store::StoreError;
 
 use super::Answer;
 use crate::Api;
@@ -86,12 +89,22 @@ pub async fn route<S: Store + 'static>(
 pub async fn route_versions<S: Store + 'static>(
     State(api): State<Api<S>>,
     Path(id): Path<String>,
-) -> Answer<RouteDetail> {
+) -> Result<(HeaderMap, Json<RouteDetail>), ApiError> {
     let id: RouteId = segment(&id, "route")?;
     let detail = api.service.route_detail(&id).await?;
-    detail
-        .map(|detail| Json(detail.into()))
-        .ok_or_else(|| ApiError::not_found(format_args!("route {id}")))
+    let detail = detail.ok_or_else(|| ApiError::not_found(format_args!("route {id}")))?;
+    // C17: a publication tag lets consumers identify the version represented by this page.
+    let published = detail.versions.last().ok_or_else(|| {
+        ServiceError::Store(StoreError::Backend(format!(
+            "the publication index for route {id} has no latest version"
+        )))
+    })?;
+    let mut headers = HeaderMap::new();
+    let tag = format!("W/\"{}-{}\"", detail.revision, published.version);
+    if let Ok(tag) = HeaderValue::from_str(&tag) {
+        headers.insert(ETAG, tag);
+    }
+    Ok((headers, Json(detail.into())))
 }
 
 /// `GET /api/routes/{id}/versions/{version}`.

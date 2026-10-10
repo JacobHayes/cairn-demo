@@ -47,6 +47,7 @@ function Fact({ route, use }: { route: RouteSummary; use: SegmentUse | undefined
 function RouteRow({ route, use }: { route: RouteSummary; use: SegmentUse | undefined }) {
   const { header } = route;
   const segment = header.kind === "segment";
+  const description = header.retired ? (header.description as string).trim() : (header.description ?? "");
   return (
     <tr data-testid="route-row" data-route={header.id} data-kind={segment ? "segment" : "process"}>
       <td>
@@ -55,6 +56,7 @@ function RouteRow({ route, use }: { route: RouteSummary; use: SegmentUse | undef
         </Link>
       </td>
       <td>{segment ? "Segment" : "Route"}</td>
+      <td className="muted small">{description.split("\n")[0]}</td>
       <td>
         <Fact route={route} use={use} />
       </td>
@@ -100,6 +102,7 @@ export function Library() {
               <tr>
                 <th>Name</th>
                 <th>Type</th>
+                <th>Description</th>
                 <th>Use</th>
               </tr>
             </thead>

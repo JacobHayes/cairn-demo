@@ -70,6 +70,15 @@ secrets: `CAIRN_ASSISTANT_API_KEY`, and `CAIRN_AUTH_<NAME>_TOKEN` (dev) or
 `CAIRN_AUTH_<NAME>_CLIENT_SECRET` (OIDC), `<NAME>` being the provider's name in capitals
 with `-` as `_`.
 
+For controlled degraded service, `CAIRN_CHAOS=1` or `true` starts with the normal
+rates; `off` (or unset) disables them. Optionally set `CAIRN_CHAOS_FILE` to a file
+containing `off`, `normal`, or `incident`. The server reads it at startup and every
+five seconds, so editing it changes the level without restarting. `incident` delays
+about 35% of searches by 1.5-2.5 seconds and about 15% of pool acquisitions by 250 ms;
+list failures keep the normal rate. A missing, unreadable, or invalid file restores
+the startup default and logs one warning per process. Restoring valid content takes
+effect on the next read. The file path is relative to the server's working directory.
+
 ## Behind a proxy
 
 Cairn serves plain HTTP. TLS termination, process supervision, and containers are left to

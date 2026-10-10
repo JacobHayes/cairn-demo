@@ -453,17 +453,18 @@ impl ConversationStore for TursoStore {
     }
 }
 
-/// Enables occasional store latency, configured once by the host at startup.
-pub fn configure_latency(enabled: bool) {
-    LATENCY.store(enabled, std::sync::atomic::Ordering::Relaxed);
+/// Selects the probability of a 250 ms pool delay, as a threshold out of 256.
+pub fn configure_latency(threshold: u8) {
+    LATENCY.store(threshold, std::sync::atomic::Ordering::Relaxed);
 }
 
-static LATENCY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static LATENCY: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 
 async fn wait_for_store() {
-    if LATENCY.load(std::sync::atomic::Ordering::Relaxed) {
+    let threshold = LATENCY.load(std::sync::atomic::Ordering::Relaxed);
+    if threshold != 0 {
         let mut draw = [0_u8; 1];
-        if getrandom::fill(&mut draw).is_ok() && draw[0] < 5 {
+        if getrandom::fill(&mut draw).is_ok() && draw[0] < threshold {
             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         }
     }

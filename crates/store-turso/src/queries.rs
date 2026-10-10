@@ -51,7 +51,27 @@ pub(crate) async fn journeys(
             }
         }
     }
-    Ok(Page::cut(items, query.size, |summary| summary.id.clone()))
+    let mut page = Page::cut(items, query.size, |summary| summary.id.clone());
+    // C16: refresh publication metadata alongside the journey index.
+    for journey in &mut page.items {
+        if let Some(lineage) = &journey.lineage {
+            journey.latest_version = latest_version(connection, &lineage.route).await?;
+        }
+    }
+    Ok(page)
+}
+
+/// C16: the publication currently available to one journey's lineage.
+async fn latest_version(
+    connection: &Connection,
+    route: &RouteId,
+) -> Result<Option<cairn_schema::VersionNumber>, StoreError> {
+    let select = "SELECT max(version_number) FROM route_versions WHERE route_id = ?1";
+    let row = first(connection, select, vec![text(route)]).await?;
+    row.and_then(|row| row.opt_int(0).transpose())
+        .transpose()?
+        .map(crate::sql::number)
+        .transpose()
 }
 
 pub(crate) async fn route_detail(

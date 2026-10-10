@@ -7,6 +7,8 @@
 
 #![forbid(unsafe_code)]
 
+mod chaos;
+
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -81,9 +83,6 @@ fn main() -> ExitCode {
     };
     telemetry::init_logs();
     telemetry::install_panic_policy();
-    let chaos = std::env::var("CAIRN_CHAOS").is_ok_and(|value| value == "1" || value == "true");
-    cairn_api::chaos::configure(chaos);
-    cairn_store_turso::configure_latency(chaos);
     let outcome = match cli.command {
         Command::Version => {
             println!(
@@ -126,7 +125,10 @@ fn runtime(work: impl Future<Output = Result<(), String>>) -> Result<(), String>
         .enable_all()
         .build()
         .map_err(|error| format!("the runtime did not start: {error}"))?
-        .block_on(work)
+        .block_on(async {
+            chaos::start();
+            work.await
+        })
 }
 
 /// `config check`: the configuration and its auth providers, checked as `serve` would, over
