@@ -10,7 +10,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 use cairn_schema::Limit;
-use openidconnect::{AsyncHttpClient, HttpRequest, HttpResponse, http, reqwest};
+use openidconnect::{AsyncHttpClient, HttpRequest, HttpResponse, http};
 use url::Url;
 
 use crate::limits::IDENTITY_CALL_DURATION_MAX;

@@ -44,7 +44,7 @@ mod gcp_iap {
 
     impl Key {
         fn jwk(&self) -> Value {
-            let point = self.signing.verifying_key().to_encoded_point(false);
+            let point = self.signing.verifying_key().to_sec1_point(false);
             json!({
                 "kty": "EC",
                 "crv": "P-256",
