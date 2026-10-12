@@ -14261,7 +14261,7 @@
   "info": {
     "description": "The Cairn HTTP API. Every request but the health check is authenticated (a session cookie or a bearer token). A rejected patch answers its rejection unchanged, every violation by path (A15); other errors answer a Problem with the request id.",
     "title": "Cairn",
-    "version": "0.2.0"
+    "version": "0.2.2"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -16229,6 +16229,19 @@
             "required": false,
             "schema": {
               "type": "boolean"
+            },
+            "style": "form"
+          },
+          {
+            "description": "Only the first this many items; every item when none. The stalled diagnostic is unaffected.",
+            "explode": true,
+            "in": "query",
+            "name": "top",
+            "required": false,
+            "schema": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
             },
             "style": "form"
           }

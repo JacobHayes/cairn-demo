@@ -6362,6 +6362,8 @@ export interface operations {
                 within?: components["schemas"]["NodeKey"];
                 /** @description Rank for the caller: prioritize for me (Priority). */
                 for_viewer?: boolean;
+                /** @description Only the first this many items; every item when none. The stalled diagnostic is unaffected. */
+                top?: number;
             };
             header?: never;
             path: {

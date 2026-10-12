@@ -145,7 +145,11 @@ pub async fn next<S: Store + 'static>(
     let id = journey(&id)?;
     let params = Params::parse(raw.as_deref(), query::NEXT_PARAMS)?;
     let asked = query::next(&params)?;
-    let projected = api.service.next(&api.call(actor), &id, &asked).await?;
+    let top = query::next_top(&params)?;
+    let mut projected = api.service.next(&api.call(actor), &id, &asked).await?;
+    if let Some(top) = top {
+        projected.value.items.drain(top..);
+    }
     Ok(Json(Projected::from_service(projected)))
 }
 
