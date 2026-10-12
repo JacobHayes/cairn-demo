@@ -5009,6 +5009,15 @@
             ],
             "description": "The latest version its route has published."
           },
+          "latest_version_node_count": {
+            "description": "The number of nodes in the latest published route version.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "lineage": {
             "anyOf": [
               {

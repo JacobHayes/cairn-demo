@@ -43,6 +43,7 @@ pub(crate) async fn journeys(
             revision: row.number(5)?,
             created_at: row.timestamp(6)?,
             latest_version: row.opt_int(7)?.map(crate::sql::number).transpose()?,
+            latest_version_node_count: None,
         };
         if backend::journey_listed(query, &summary, referencing.as_ref()) {
             items.push(summary);
@@ -55,23 +56,37 @@ pub(crate) async fn journeys(
     // C16: refresh publication metadata alongside the journey index.
     for journey in &mut page.items {
         if let Some(lineage) = &journey.lineage {
-            journey.latest_version = latest_version(connection, &lineage.route).await?;
+            let (version, node_count) = publication_summary(connection, &lineage.route).await?;
+            journey.latest_version = version;
+            journey.latest_version_node_count = node_count;
         }
     }
     Ok(page)
 }
 
-/// C16: the publication currently available to one journey's lineage.
-async fn latest_version(
+/// C16: the latest publication and its node count for one journey's lineage.
+async fn publication_summary(
     connection: &Connection,
     route: &RouteId,
-) -> Result<Option<cairn_schema::VersionNumber>, StoreError> {
-    let select = "SELECT max(version_number) FROM route_versions WHERE route_id = ?1";
-    let row = first(connection, select, vec![text(route)]).await?;
-    row.and_then(|row| row.opt_int(0).transpose())
-        .transpose()?
-        .map(crate::sql::number)
-        .transpose()
+) -> Result<(Option<cairn_schema::VersionNumber>, Option<u32>), StoreError> {
+    let select = "SELECT v.version_number, n.* FROM route_versions v \
+                  LEFT JOIN nodes n ON n.graph_id IN \
+                  (SELECT g.id FROM graphs g WHERE g.route_id = v.route_id \
+                  AND g.version_number = v.version_number AND g.kind = 'route_version') \
+                  WHERE v.route_id = ?1 ORDER BY v.version_number";
+    let mut latest = None;
+    let mut node_count = 0;
+    for row in rows(connection, select, vec![text(route)]).await? {
+        let version = row.number(0)?;
+        if latest != Some(version) {
+            latest = Some(version);
+            node_count = 0;
+        }
+        if row.opt_text(2)?.is_some() {
+            node_count += 1;
+        }
+    }
+    Ok((latest, latest.map(|_| node_count)))
 }
 
 pub(crate) async fn route_detail(

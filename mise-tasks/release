@@ -34,7 +34,8 @@ npm ci --no-audit --no-fund
 # Prepare the exact assets to embed. The later build uploads maps for identical bytes.
 (env -u SENTRY_AUTH_TOKEN mise run build:web)
 assets_digest() {
-  node -e 'const fs=require("node:fs"),path=require("node:path"),crypto=require("node:crypto"); const hash=crypto.createHash("sha256"); function walk(dir){for(const name of fs.readdirSync(dir).sort()){const file=path.join(dir,name);if(fs.statSync(file).isDirectory())walk(file);else {hash.update(file);hash.update(fs.readFileSync(file));}}}walk("web/app/dist/build");console.log(hash.digest("hex"))'
+  # Uploading removes the trailing debug-id comment.
+  node -e 'const fs=require("node:fs"),path=require("node:path"),crypto=require("node:crypto"); const hash=crypto.createHash("sha256"); function walk(dir){for(const name of fs.readdirSync(dir).sort()){const file=path.join(dir,name);if(fs.statSync(file).isDirectory())walk(file);else {hash.update(file);const bytes=fs.readFileSync(file);hash.update(file.endsWith(".js")?Buffer.from(bytes.toString("latin1").replace(/\n?\/\/# debugId=[0-9a-f-]+\s*$/, ""),"latin1"):bytes);}}}walk("web/app/dist/build");console.log(hash.digest("hex"))'
 }
 assets_before=$(assets_digest)
 # Relative DWARF paths resolve here during --include-sources, before workspace cleanup.

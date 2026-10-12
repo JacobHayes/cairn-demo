@@ -198,7 +198,20 @@ async fn index_fixture<S: Store>(store: &S) {
     .await;
     applied(
         store,
-        build::publish(route_patch("p_v2", "vendor", 2), "vendor", 2, 2).commit(),
+        build::publish(
+            route_patch("p_v2", "vendor", 2).event(
+                EventType::NodeAdded,
+                Subject::Node(node_key("n_second")),
+                vec![put_in(
+                    &GraphId::RouteDraft(id("vendor")),
+                    GraphRecord::Node(action("n_second", "second", None)),
+                )],
+            ),
+            "vendor",
+            2,
+            2,
+        )
+        .commit(),
     )
     .await;
     applied(store, create_route("p_hiring", "hiring").commit()).await;
@@ -336,6 +349,12 @@ pub async fn the_journey_index_filters_by_status_route_version_reference_and_upg
         assert_eq!(page.next, None);
     }
     let page = store.journeys(&query()).await.unwrap();
+    let counts: Vec<_> = page
+        .items
+        .iter()
+        .map(|summary| summary.latest_version_node_count)
+        .collect();
+    assert_eq!(counts, vec![Some(2), Some(2), Some(0), None]);
     let a = &page.items[0];
     assert_eq!(
         (a.revision, a.latest_version, a.upgrade_available()),

@@ -195,6 +195,7 @@ impl BrowserRoot {
                 revision,
                 created_at,
                 latest_version,
+                latest_version_node_count,
             } = summary;
             JourneySummary {
                 id,
@@ -204,6 +205,7 @@ impl BrowserRoot {
                 revision,
                 created_at,
                 latest_version,
+                latest_version_node_count,
                 upgrade_available,
             }
         });

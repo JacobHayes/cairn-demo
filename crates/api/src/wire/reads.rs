@@ -30,6 +30,9 @@ pub struct JourneySummary {
     /// The latest version its route has published.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latest_version: Option<VersionNumber>,
+    /// The number of nodes in the latest published route version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_version_node_count: Option<u32>,
     /// Whether its route has published a version newer than its own (C16).
     pub upgrade_available: bool,
 }
@@ -45,6 +48,7 @@ impl From<cairn_store::JourneySummary> for JourneySummary {
             revision,
             created_at,
             latest_version,
+            latest_version_node_count,
         } = summary;
         Self {
             id,
@@ -54,6 +58,7 @@ impl From<cairn_store::JourneySummary> for JourneySummary {
             revision,
             created_at,
             latest_version,
+            latest_version_node_count,
             upgrade_available,
         }
     }

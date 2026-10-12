@@ -2319,6 +2319,11 @@ export interface components {
             id: components["schemas"]["JourneyId"];
             /** @description The latest version its route has published. */
             latest_version?: components["schemas"]["VersionNumber"] | null;
+            /**
+             * Format: uint32
+             * @description The number of nodes in the latest published route version.
+             */
+            latest_version_node_count?: number | null;
             /** @description The route version it follows. */
             lineage?: components["schemas"]["Lineage"] | null;
             /** @description Its name. */

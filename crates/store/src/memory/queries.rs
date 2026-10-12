@@ -40,6 +40,16 @@ impl State {
                     .lineage
                     .as_ref()
                     .and_then(|lineage| self.latest_version(&lineage.route)),
+                latest_version_node_count: header.lineage.as_ref().and_then(|lineage| {
+                    let version = self.latest_version(&lineage.route)?;
+                    let graph = self.domains.graphs.get(&GraphId::RouteVersion {
+                        route: lineage.route.clone(),
+                        version,
+                    });
+                    Some(graph.map_or(0, |graph| {
+                        u32::try_from(graph.nodes.len()).unwrap_or(u32::MAX)
+                    }))
+                }),
             };
             if backend::journey_listed(query, &summary, referencing.as_ref()) {
                 items.push(summary);

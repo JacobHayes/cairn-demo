@@ -125,6 +125,8 @@ pub struct JourneySummary {
     pub created_at: Timestamp,
     /// The latest version its route has published.
     pub latest_version: Option<VersionNumber>,
+    /// The number of nodes in the latest published route version.
+    pub latest_version_node_count: Option<u32>,
 }
 
 impl JourneySummary {
