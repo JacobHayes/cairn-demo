@@ -47,7 +47,7 @@ function Fact({ route, use }: { route: RouteSummary; use: SegmentUse | undefined
 function RouteRow({ route, use }: { route: RouteSummary; use: SegmentUse | undefined }) {
   const { header } = route;
   const segment = header.kind === "segment";
-  const description = header.retired ? (header.description as string).trim() : (header.description ?? "");
+  const description = (header.description ?? "").trim();
   return (
     <tr data-testid="route-row" data-route={header.id} data-kind={segment ? "segment" : "process"}>
       <td>
