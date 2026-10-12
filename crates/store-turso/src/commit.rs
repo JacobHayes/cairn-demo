@@ -130,7 +130,7 @@ async fn rollback(connection: &Connection) {
 }
 
 #[tracing::instrument(level = "info", skip_all,
-    fields(sentry.op = "db.transaction", sentry.name = "commit", db.system = "sqlite"))]
+    fields(sentry.op = "store.transaction", sentry.name = "commit", db.system = "sqlite"))]
 async fn attempt(
     connection: &Connection,
     durability: &Durability,

@@ -91,7 +91,7 @@ macro_rules! read {
             },
             tracing::info_span!(
                 "read transaction",
-                sentry.op = "db.transaction",
+                sentry.op = "store.transaction",
                 sentry.name = "read",
                 db.system = "sqlite"
             ),
@@ -134,7 +134,7 @@ macro_rules! in_transaction {
         };
         lease.release();
         result
-        }, tracing::info_span!("write transaction", sentry.op = "db.transaction", sentry.name = "write", db.system = "sqlite")).await
+        }, tracing::info_span!("write transaction", sentry.op = "store.transaction", sentry.name = "write", db.system = "sqlite")).await
     }};
 }
 
