@@ -192,6 +192,11 @@ pub const NEXT_PARAMS: &[ParamSpec] = &[
         "for_viewer",
         "Rank for the caller: prioritize for me (Priority).",
     ),
+    ParamSpec::one::<u32>(
+        "top",
+        "Only the first this many items; every item when none. The stalled diagnostic is \
+         unaffected.",
+    ),
 ];
 
 /// `GET /api/journeys/{id}/nodes` (C9).
@@ -434,6 +439,16 @@ pub fn level(params: &Params) -> Result<LevelQuery, ApiError> {
         params.all("collapsed")?.into_iter().collect(),
         params.all("display")?.into_iter().collect(),
     ))
+}
+
+/// C10: how many of the next list's items to answer with; every item when none.
+///
+/// # Errors
+///
+/// A bad request when it does not parse.
+pub fn next_top(params: &Params) -> Result<Option<usize>, ApiError> {
+    let top: Option<u32> = params.one("top")?;
+    Ok(top.map(|top| top as usize))
 }
 
 /// C10: the next list's query.
