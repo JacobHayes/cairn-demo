@@ -177,7 +177,8 @@ pub fn init_sentry() -> Result<sentry::ClientInitGuard, String> {
         {
             0.0
         } else {
-            rate
+            // Follow the caller's decision so browser and API spans land in the same traces.
+            context.sampled().map_or(rate, f32::from)
         }
     });
     Ok(sentry::init(options))

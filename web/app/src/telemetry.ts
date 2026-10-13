@@ -22,7 +22,7 @@ export function initTelemetry(): void {
       featureFlags,
       wasmIntegration(),
     ],
-    tracesSampleRate: 1,
+    tracesSampleRate: Number(import.meta.env["VITE_SENTRY_TRACES_SAMPLE_RATE"] ?? 1),
     replaysSessionSampleRate: 1,
     replaysOnErrorSampleRate: 1,
     profileSessionSampleRate: 1,
