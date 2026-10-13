@@ -757,7 +757,7 @@ dependencies = [
 
 [[package]]
 name = "cairn"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "axum",
  "cairn-api",
@@ -790,7 +790,7 @@ dependencies = [
 
 [[package]]
 name = "cairn-api"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "axum",
  "cairn-assistant",
@@ -823,7 +823,7 @@ dependencies = [
 
 [[package]]
 name = "cairn-assistant"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "axum",
  "cairn-auth",
@@ -847,7 +847,7 @@ dependencies = [
 
 [[package]]
 name = "cairn-auth"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "axum",
  "base64 0.23.1",
@@ -877,7 +877,7 @@ dependencies = [
 
 [[package]]
 name = "cairn-engine"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "cairn-engine",
  "cairn-schema",
@@ -890,7 +890,7 @@ dependencies = [
 
 [[package]]
 name = "cairn-mcp"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "axum",
  "cairn-auth",
@@ -911,7 +911,7 @@ dependencies = [
 
 [[package]]
 name = "cairn-schema"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "cairn-schema",
  "jiff",
@@ -928,7 +928,7 @@ dependencies = [
 
 [[package]]
 name = "cairn-service"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "cairn-engine",
  "cairn-schema",
@@ -946,7 +946,7 @@ dependencies = [
 
 [[package]]
 name = "cairn-store"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "cairn-schema",
  "cairn-store",
@@ -956,7 +956,7 @@ dependencies = [
 
 [[package]]
 name = "cairn-store-turso"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "cairn-schema",
  "cairn-store",
@@ -974,7 +974,7 @@ dependencies = [
 
 [[package]]
 name = "cairn-tests"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "axum",
  "base64 0.23.1",
@@ -1012,7 +1012,7 @@ dependencies = [
 
 [[package]]
 name = "cairn-wasm"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "cairn-engine",
  "cairn-schema",
