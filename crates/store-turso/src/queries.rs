@@ -53,40 +53,57 @@ pub(crate) async fn journeys(
         }
     }
     let mut page = Page::cut(items, query.size, |summary| summary.id.clone());
-    // C16: refresh publication metadata alongside the journey index.
+    // C16: refresh publication metadata alongside the journey index in a single batch query.
+    let route_ids: BTreeSet<&RouteId> = page
+        .items
+        .iter()
+        .filter_map(|j| j.lineage.as_ref().map(|l| &l.route))
+        .collect();
+    let summaries = publication_summaries(connection, &route_ids).await?;
     for journey in &mut page.items {
-        if let Some(lineage) = &journey.lineage {
-            let (version, node_count) = publication_summary(connection, &lineage.route).await?;
-            journey.latest_version = version;
-            journey.latest_version_node_count = node_count;
+        if let Some(lineage) = &journey.lineage
+            && let Some((version, node_count)) = summaries.get(&lineage.route)
+        {
+            journey.latest_version = Some(*version);
+            journey.latest_version_node_count = Some(*node_count);
         }
     }
     Ok(page)
 }
 
-/// C16: the latest publication and its node count for one journey's lineage.
-async fn publication_summary(
+/// C16: the latest publication and its node count for a batch of routes, in a single query.
+async fn publication_summaries(
     connection: &Connection,
-    route: &RouteId,
-) -> Result<(Option<cairn_schema::VersionNumber>, Option<u32>), StoreError> {
-    let select = "SELECT v.version_number, n.* FROM route_versions v \
-                  LEFT JOIN nodes n ON n.graph_id IN \
-                  (SELECT g.id FROM graphs g WHERE g.route_id = v.route_id \
-                  AND g.version_number = v.version_number AND g.kind = 'route_version') \
-                  WHERE v.route_id = ?1 ORDER BY v.version_number";
-    let mut latest = None;
-    let mut node_count = 0;
-    for row in rows(connection, select, vec![text(route)]).await? {
-        let version = row.number(0)?;
-        if latest != Some(version) {
-            latest = Some(version);
-            node_count = 0;
-        }
-        if row.opt_text(2)?.is_some() {
-            node_count += 1;
-        }
+    route_ids: &BTreeSet<&RouteId>,
+) -> Result<BTreeMap<RouteId, (cairn_schema::VersionNumber, u32)>, StoreError> {
+    if route_ids.is_empty() {
+        return Ok(BTreeMap::new());
     }
-    Ok((latest, latest.map(|_| node_count)))
+    let placeholders = (1..=route_ids.len())
+        .map(|i| format!("?{i}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let select = format!(
+        "WITH latest AS (\
+           SELECT route_id, max(version_number) AS version_number \
+           FROM route_versions WHERE route_id IN ({placeholders}) GROUP BY route_id\
+         ) \
+         SELECT l.route_id, l.version_number, \
+           (SELECT count(*) FROM graphs g JOIN nodes n ON n.graph_id = g.id \
+            WHERE g.route_id = l.route_id AND g.version_number = l.version_number \
+            AND g.kind = 'route_version') \
+         FROM latest l"
+    );
+    let params: Vec<Value> = route_ids.iter().map(|r| text(*r)).collect();
+    let mut result = BTreeMap::new();
+    for row in rows(connection, &select, params).await? {
+        let route: RouteId = row.parse(0)?;
+        let version = row.number(1)?;
+        let node_count =
+            u32::try_from(row.int(2)?).map_err(|e| corrupt(&format!("node count: {e}")))?;
+        result.insert(route, (version, node_count));
+    }
+    Ok(result)
 }
 
 pub(crate) async fn route_detail(
